@@ -2,13 +2,105 @@ import asyncio
 import random
 from playwright.async_api import ElementHandle, Page, async_playwright
 
+from agents import UserAgent
+
+MAX_ELEMENTS = 100
+
+
+async def run(playwright):
+    browser = await playwright.chromium.launch(headless=False)
+    context = await browser.new_context()
+    page = await context.new_page()
+
+    # Load the webpage by link
+    await page.goto("https://news.ycombinator.com")
+
+    # Setup the user agent
+    agent = UserAgent(
+        "Dave is a tech savy coder who is looking for a new job.", model="gpt-4"
+    )
+
+    # Get elements with ARIA labels and roles
+    elements = await get_visible_and_interactable_elements_with_aria_labels_and_roles(
+        page
+    )
+
+    # Interact with the elements based on their roles
+    # Interact with the elements based on their roles
+    for _ in range(5):
+        # Pass content from the page to the agent as a dict
+        state = await get_page_data(page)
+        # state_ack = agent.update_state(state)
+        # print(f"State Acknowledgement: \n\n {state_ack}")
+
+        # Pass the action dict to the agent and get the selected action
+        element_dict = {await e.get_attribute("id"): e for e in elements[:MAX_ELEMENTS]}
+
+        print(element_dict)
+
+        # element_id = agent.select_action(element_dict)
+        # element = element_dict[element_id]
+
+        # select random element
+        element_id = random.choice(list(element_dict.keys()))
+        element = element_dict[element_id]
+
+        print(f"Selected element with id {element_id}...")
+        # print(f"Explanation: \n\n {agent.get_explantion()}")
+
+        # Interact with the elements
+        await interact_with_elements(
+            page, element, fill_text="Custom text", type_text="Custom search query"
+        )
+
+        # Extract the new ARIA labels and roles
+        elements = (
+            await get_visible_and_interactable_elements_with_aria_labels_and_roles(page)
+        )
+
+    # Close the browser after completing the tasks
+    await browser.close()
+
+
+async def get_page_data(page: Page) -> dict:
+    title = await page.title()
+
+    try:
+        description_elem = await page.query_selector('meta[name="description"]')
+        description = await description_elem.content() if description_elem else None
+
+        meta_data = await page.eval_on_selector_all(
+            "meta",
+            'els => els.map(el => ({name: el.getAttribute("name"), content: el.content}))',
+        )
+
+        small_content = await page.eval_on_selector(
+            "body", "el => el.textContent.slice(0, 100)"
+        )
+    except Exception:
+        description = None
+        meta_data = None
+        small_content = None
+
+    data = {
+        "title": title,
+        "description": description,
+        "metadata": meta_data,
+        "small_content": small_content,
+    }
+    return data
+
 
 async def interact_with_elements(page: Page, element, fill_text=None, type_text=None):
     aria_role = await element.get_attribute("role")
+    tag_name = await element.get_attribute("tagName")
 
     try:
-        if aria_role == "button":
-            await element.click()
+        if tag_name:
+            if tag_name.lower() == "a" and await element.get_attribute("href"):
+                await element.click()
+        elif aria_role == "button":
+            element.click()
         elif aria_role == "textbox":
             if fill_text:
                 await element.fill(fill_text)
@@ -46,37 +138,6 @@ async def interact_with_elements(page: Page, element, fill_text=None, type_text=
             raise
 
 
-async def run(playwright):
-    browser = await playwright.chromium.launch(headless=False)
-    context = await browser.new_context()
-    page = await context.new_page()
-
-    # Load the webpage by link
-    await page.goto("https://www.google.com")
-
-    # Get elements with ARIA labels and roles
-    elements = await get_visible_and_interactable_elements_with_aria_labels_and_roles(
-        page
-    )
-
-    # Interact with the elements based on their roles
-    # Interact with the elements based on their roles
-    for _ in range(5):
-        # Interact with the elements
-        element = random.sample(elements, 1)[0]
-        await interact_with_elements(
-            page, element, fill_text="Custom text", type_text="Custom search query"
-        )
-
-        # Extract the new ARIA labels and roles
-        elements = (
-            await get_visible_and_interactable_elements_with_aria_labels_and_roles(page)
-        )
-
-    # Close the browser after completing the tasks
-    await browser.close()
-
-
 async def is_element_visible(element: ElementHandle) -> bool:
     bounding_box = await element.bounding_box()
     return bounding_box is not None
@@ -93,7 +154,7 @@ async def is_element_interactable(element):
 
 
 async def get_visible_and_interactable_elements_with_aria_labels_and_roles(page: Page):
-    all_elements = await page.query_selector_all("[aria-label], [role]")
+    all_elements = await page.query_selector_all("[aria-label], [role], a[href]")
     visible_and_interactable_elements = []
 
     for element in all_elements:
@@ -103,9 +164,10 @@ async def get_visible_and_interactable_elements_with_aria_labels_and_roles(page:
     return visible_and_interactable_elements
 
 
-async def main():
-    async with async_playwright() as playwright:
-        await run(playwright)
+if __name__ == "__main__":
 
+    async def main():
+        async with async_playwright() as playwright:
+            await run(playwright)
 
-asyncio.run(main())
+    asyncio.run(main())
